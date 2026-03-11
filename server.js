@@ -9,7 +9,7 @@ import { GoogleAIFileManager } from "@google/generative-ai/server";
 dotenv.config();
 
 const app = express();
-const port = 3001;
+const port = process.env.PORT || 3001;
 
 app.use(cors());
 app.use(express.json());
@@ -146,7 +146,7 @@ Responde de forma concisa, directa y amigable.
     }
 });
 
-app.listen(port, () => {
+app.listen(port, '0.0.0.0', () => {
     console.log(`Backend server running on http://localhost:${port}`);
     if (!apiKey) console.log(`\n!!! ADD YOUR GEMINI_API_KEY TO .env TO MAKE THIS WORK !!!\n`);
 });
