@@ -43,7 +43,6 @@ app.get('/api/health', async (req, res) => {
         error: null
     };
     try {
-        // Use a simple raw query that works with the pg adapter
         const result = await prisma.$queryRawUnsafe('SELECT 1 as check');
         status.dbConnection = true;
     } catch (e) {
@@ -52,22 +51,20 @@ app.get('/api/health', async (req, res) => {
     res.json(status);
 });
 
-// Set up Multer for handling audio file uploads
 const upload = multer({ dest: 'uploads/' });
 
-// Initialize Gemini API
 const apiKey = process.env.GEMINI_API_KEY;
 if (!apiKey) {
     console.warn("⚠️ Warning: GEMINI_API_KEY is not set in the .env file.");
 }
 const genAI = new GoogleGenerativeAI(apiKey);
 
-// System Prompt forcing JSON output
+// System Prompt
 const SYSTEM_INSTRUCTION = `
 Eres un asistente experto organizado para creativos con TDAH.
 Recibirás un audio (un briefing de un cliente o notas propias).
 
-Tu tarea es analizarlo y devolver ESTRICTAMENTE un JSON con esta estructura exacta, sin texto adicional:
+Tu tarea es analizarlo y devolver la información en este formato JSON estricto:
 {
   "title": "Un título corto (máx 5 palabras)",
   "transcript": "La transcripción exacta de lo que escuchaste",
@@ -81,7 +78,7 @@ Tu tarea es analizarlo y devolver ESTRICTAMENTE un JSON con esta estructura exac
     { "id": "2", "text": "Tarea accionable corta 2", "completed": false }
   ]
 }
-No devuelvas bloques de código \`\`\`json, SOLO el JSON puro. Asegúrate de capturar tareas accionables para el checklist.
+Asegúrate de capturar tareas accionables para el checklist.
 `;
 
 app.post('/api/process-audio', upload.single('audio'), async (req, res) => {
@@ -92,7 +89,6 @@ app.post('/api/process-audio', upload.single('audio'), async (req, res) => {
 
         console.log(`Received audio file: ${req.file.path}, mimetype: ${req.file.mimetype}, size: ${req.file.size}`);
 
-        // Normalize MIME type — Android sends things like "audio/webm;codecs=opus"
         let mimeType = req.file.mimetype || 'audio/webm';
         if (mimeType.includes('webm')) mimeType = 'audio/webm';
         else if (mimeType.includes('ogg')) mimeType = 'audio/ogg';
@@ -100,19 +96,21 @@ app.post('/api/process-audio', upload.single('audio'), async (req, res) => {
         else if (mimeType.includes('mpeg') || mimeType.includes('mp3')) mimeType = 'audio/mpeg';
         console.log(`Using mimeType for Gemini: ${mimeType}`);
 
-        // Read file as base64 and send inline (no Files API needed)
         const audioData = fs.readFileSync(req.file.path);
         const base64Audio = audioData.toString('base64');
-        fs.unlinkSync(req.file.path); // Clean up immediately
+        fs.unlinkSync(req.file.path); 
 
-        // Generate content with inline audio data
-        const model = genAI.getGenerativeModel(
-            { model: "gemini-1.5-flash" },
-            { apiVersion: 'v1' }
-        );
+        // ✅ FORMA CORRECTA: Pasamos las instrucciones y forzamos el JSON aquí
+        const model = genAI.getGenerativeModel({ 
+            model: "gemini-1.5-flash",
+            systemInstruction: SYSTEM_INSTRUCTION,
+            generationConfig: {
+                responseMimeType: "application/json" // Esto fuerza a Gemini a responder SOLO con JSON válido
+            }
+        });
 
+        // ✅ FORMA CORRECTA: Solo pasamos el audio y el prompt en generateContent
         const result = await model.generateContent([
-            { text: SYSTEM_INSTRUCTION },
             {
                 inlineData: {
                     mimeType: mimeType,
@@ -122,13 +120,12 @@ app.post('/api/process-audio', upload.single('audio'), async (req, res) => {
             { text: "Por favor, analiza este audio y genera el JSON solicitado." }
         ]);
 
-        const responseText = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
+        // Al usar responseMimeType="application/json", el texto ya viene limpio
+        const responseText = result.response.text();
         console.log('Gemini response:', responseText.substring(0, 100));
 
-        // Try to parse JSON from Gemini
         const parsedData = JSON.parse(responseText);
 
-        // Save to Database via Prisma
         const savedProject = await prisma.project.create({
             data: {
                 title: parsedData.title,
@@ -147,19 +144,19 @@ app.post('/api/process-audio', upload.single('audio'), async (req, res) => {
 
         res.json(savedProject);
 
-
     } catch (error) {
         console.error("Error processing audio:", error.message);
-        // Cleanup physical file on error if exists
         if (req.file && fs.existsSync(req.file.path)) {
             fs.unlinkSync(req.file.path);
         }
-        // Handle Gemini rate limit error specifically
+        
         const isRateLimit = error.message?.includes('429') || error.status === 429;
         const details = isRateLimit
             ? 'Límite de cuota de Gemini alcanzado. Espera 1 minuto y vuelve a intentarlo.'
             : (error.message || 'Error desconocido');
-        res.status(500).json({ error: 'Failed to process audio', details });
+        
+        // Devolvemos el error en formato JSON para que el frontend lo pueda leer bien
+        res.status(500).json({ error: 'Failed to process audio', details: details });
     }
 });
 
@@ -211,10 +208,8 @@ app.put('/api/projects/:projectId/checklist/:taskId', async (req, res) => {
 app.post('/api/chat', async (req, res) => {
     try {
         const { question, context } = req.body;
-        const model = genAI.getGenerativeModel(
-            { model: "gemini-1.5-flash" },
-            { apiVersion: 'v1' }
-        );
+        // ✅ Quitamos el apiVersion aquí también
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
         const prompt = `
 Eres un asistente que responde dudas sobre este proyecto creativo.
