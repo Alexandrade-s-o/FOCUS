@@ -14,7 +14,7 @@ export const mockProcessRecording = async (audioBlob) => {
     let errMsg = 'Error al comunicarse con la IA';
     try {
       const errData = await response.json();
-      errMsg = errData.error || errMsg;
+      errMsg = errData.details || errData.error || errMsg;
     } catch (e) { }
     throw new Error(errMsg);
   }

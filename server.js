@@ -92,14 +92,22 @@ app.post('/api/process-audio', upload.single('audio'), async (req, res) => {
             return res.status(400).json({ error: 'No audio file provided' });
         }
 
-        console.log(`Received audio file: ${req.file.path}`);
+        console.log(`Received audio file: ${req.file.path}, mimetype: ${req.file.mimetype}, size: ${req.file.size}`);
+
+        // Normalize MIME type — Android sends things like "audio/webm;codecs=opus"
+        let mimeType = req.file.mimetype || 'audio/webm';
+        if (mimeType.includes('webm')) mimeType = 'audio/webm';
+        else if (mimeType.includes('ogg')) mimeType = 'audio/ogg';
+        else if (mimeType.includes('mp4')) mimeType = 'audio/mp4';
+        else if (mimeType.includes('mpeg') || mimeType.includes('mp3')) mimeType = 'audio/mpeg';
+        console.log(`Using mimeType for Gemini: ${mimeType}`);
 
         // 1. Upload the file to Gemini
         const uploadResult = await fileManager.uploadFile(
             req.file.path,
             {
-                mimeType: req.file.mimetype,
-                displayName: req.file.originalname,
+                mimeType: mimeType,
+                displayName: req.file.originalname || 'recording.webm',
             }
         );
 
