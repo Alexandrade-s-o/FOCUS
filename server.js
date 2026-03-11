@@ -13,6 +13,10 @@ dotenv.config();
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
 
+// Ensure DB is connected before accepting requests
+prisma.$connect()
+    .then(() => console.log('✅ Prisma connected to database'))
+    .catch(e => console.error('❌ Prisma connection error:', e.message));
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -30,7 +34,8 @@ app.get('/api/health', async (req, res) => {
         error: null
     };
     try {
-        await prisma.$queryRaw`SELECT 1`;
+        // Use a simple raw query that works with the pg adapter
+        const result = await prisma.$queryRawUnsafe('SELECT 1 as check');
         status.dbConnection = true;
     } catch (e) {
         status.error = e.message;
@@ -116,7 +121,7 @@ app.post('/api/process-audio', upload.single('audio'), async (req, res) => {
 
         // 3. Generate content with the model
         const model = genAI.getGenerativeModel({
-            model: "gemini-1.5-flash",
+            model: "gemini-2.0-flash",
             systemInstruction: SYSTEM_INSTRUCTION,
         });
 
@@ -219,7 +224,7 @@ app.post('/api/chat', async (req, res) => {
     try {
         const { question, context } = req.body;
 
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
         const prompt = `
 Eres un asistente que responde dudas sobre este proyecto creativo.
