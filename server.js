@@ -106,13 +106,13 @@ app.post('/api/process-audio', upload.single('audio'), async (req, res) => {
         fs.unlinkSync(req.file.path); // Clean up immediately
 
         // Generate content with inline audio data
-        const model = genAI.getGenerativeModel(
-            { model: "gemini-1.5-flash" },
-            { apiVersion: "v1" }
-        );
+        const model = genAI.getGenerativeModel({
+            model: "gemini-1.5-flash-latest",
+            systemInstruction: SYSTEM_INSTRUCTION,
+        });
 
         const result = await model.generateContent([
-            { text: SYSTEM_INSTRUCTION },
+
             {
                 inlineData: {
                     mimeType: mimeType,
@@ -212,10 +212,7 @@ app.post('/api/chat', async (req, res) => {
     try {
         const { question, context } = req.body;
 
-        const model = genAI.getGenerativeModel(
-            { model: "gemini-1.5-flash" },
-            { apiVersion: "v1" }
-        );
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
 
         const prompt = `
 Eres un asistente que responde dudas sobre este proyecto creativo.
