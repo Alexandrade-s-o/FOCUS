@@ -166,12 +166,17 @@ app.post('/api/process-audio', upload.single('audio'), async (req, res) => {
 
 
     } catch (error) {
-        console.error("Error processing audio:", error);
+        console.error("Error processing audio:", error.message);
         // Cleanup physical file on error if exists
         if (req.file && fs.existsSync(req.file.path)) {
             fs.unlinkSync(req.file.path);
         }
-        res.status(500).json({ error: 'Failed to process audio', details: error.message });
+        // Handle Gemini rate limit error specifically
+        const isRateLimit = error.message?.includes('429') || error.status === 429;
+        const details = isRateLimit
+            ? 'Límite de cuota de Gemini alcanzado. Espera 1 minuto y vuelve a intentarlo.'
+            : (error.message || 'Error desconocido');
+        res.status(500).json({ error: 'Failed to process audio', details });
     }
 });
 
