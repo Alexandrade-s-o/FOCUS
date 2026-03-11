@@ -13,7 +13,6 @@ dotenv.config();
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
 
-// Run DB migration at startup so tables always exist
 try {
     console.log('⏳ Running prisma db push...');
     execSync('node node_modules/prisma/build/index.js db push --accept-data-loss', { stdio: 'inherit' });
@@ -22,7 +21,6 @@ try {
     console.error('❌ DB push failed:', e.message);
 }
 
-// Connect Prisma
 prisma.$connect()
     .then(() => console.log('✅ Prisma connected to database'))
     .catch(e => console.error('❌ Prisma connection error:', e.message));
@@ -33,7 +31,6 @@ const port = process.env.PORT || 3001;
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 
-// ═══ Health check — abre esta URL para diagnosticar ═══
 app.get('/api/health', async (req, res) => {
     const status = {
         server: 'ok',
@@ -43,7 +40,7 @@ app.get('/api/health', async (req, res) => {
         error: null
     };
     try {
-        const result = await prisma.$queryRawUnsafe('SELECT 1 as check');
+        await prisma.$queryRawUnsafe('SELECT 1 as check');
         status.dbConnection = true;
     } catch (e) {
         status.error = e.message;
@@ -54,12 +51,9 @@ app.get('/api/health', async (req, res) => {
 const upload = multer({ dest: 'uploads/' });
 
 const apiKey = process.env.GEMINI_API_KEY;
-if (!apiKey) {
-    console.warn("⚠️ Warning: GEMINI_API_KEY is not set in the .env file.");
-}
+if (!apiKey) console.warn("⚠️ Warning: GEMINI_API_KEY is not set in the .env file.");
 const genAI = new GoogleGenerativeAI(apiKey);
 
-// System Prompt
 const SYSTEM_INSTRUCTION = `
 Eres un asistente experto organizado para creativos con TDAH.
 Recibirás un audio (un briefing de un cliente o notas propias).
@@ -83,9 +77,7 @@ Asegúrate de capturar tareas accionables para el checklist.
 
 app.post('/api/process-audio', upload.single('audio'), async (req, res) => {
     try {
-        if (!req.file) {
-            return res.status(400).json({ error: 'No audio file provided' });
-        }
+        if (!req.file) return res.status(400).json({ error: 'No audio file provided' });
 
         console.log(`Received audio file: ${req.file.path}, mimetype: ${req.file.mimetype}, size: ${req.file.size}`);
 
@@ -94,29 +86,35 @@ app.post('/api/process-audio', upload.single('audio'), async (req, res) => {
         else if (mimeType.includes('ogg')) mimeType = 'audio/ogg';
         else if (mimeType.includes('mp4')) mimeType = 'audio/mp4';
         else if (mimeType.includes('mpeg') || mimeType.includes('mp3')) mimeType = 'audio/mpeg';
-        console.log(`Using mimeType for Gemini: ${mimeType}`);
-
+        
         const audioData = fs.readFileSync(req.file.path);
         const base64Audio = audioData.toString('base64');
         fs.unlinkSync(req.file.path); 
 
-        // ✅ CORRECCIÓN AQUÍ: Usamos gemini-1.5-flash-latest
-        const model = genAI.getGenerativeModel({ 
-            model: "gemini-1.5-flash-latest",
-            systemInstruction: SYSTEM_INSTRUCTION,
-            generationConfig: {
-                responseMimeType: "application/json"
-            }
-        });
+        // 🛑 EL TRUCO INFALIBLE: 
+        // 1. Usamos gemini-1.5-flash (el nombre estable)
+        // 2. Obligamos a usar la versión 'v1' donde sí encuentra el modelo.
+        // 3. NO usamos el parámetro systemInstruction aquí para evitar el error 400.
+        const model = genAI.getGenerativeModel(
+            { 
+                model: "gemini-1.5-flash",
+                generationConfig: {
+                    responseMimeType: "application/json"
+                }
+            },
+            { apiVersion: 'v1' } 
+        );
 
+        // Pasamos las instrucciones como texto normal mezcladas en la conversación
         const result = await model.generateContent([
+            { text: "INSTRUCCIONES DEL SISTEMA:\n" + SYSTEM_INSTRUCTION },
             {
                 inlineData: {
                     mimeType: mimeType,
                     data: base64Audio
                 }
             },
-            { text: "Por favor, analiza este audio y genera el JSON solicitado." }
+            { text: "\nPor favor, analiza este audio basándote estrictamente en las instrucciones anteriores y genera el JSON." }
         ]);
 
         const responseText = result.response.text();
@@ -144,9 +142,7 @@ app.post('/api/process-audio', upload.single('audio'), async (req, res) => {
 
     } catch (error) {
         console.error("Error processing audio:", error.message);
-        if (req.file && fs.existsSync(req.file.path)) {
-            fs.unlinkSync(req.file.path);
-        }
+        if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
         
         const isRateLimit = error.message?.includes('429') || error.status === 429;
         const details = isRateLimit
@@ -157,7 +153,6 @@ app.post('/api/process-audio', upload.single('audio'), async (req, res) => {
     }
 });
 
-// GET all projects
 app.get('/api/projects', async (req, res) => {
     try {
         const projects = await prisma.project.findMany({
@@ -171,33 +166,25 @@ app.get('/api/projects', async (req, res) => {
     }
 });
 
-// DELETE project
 app.delete('/api/projects/:id', async (req, res) => {
     try {
-        await prisma.project.delete({
-            where: { id: req.params.id }
-        });
+        await prisma.project.delete({ where: { id: req.params.id } });
         res.json({ success: true });
     } catch (error) {
-        console.error("Error deleting project:", error);
         res.status(500).json({ error: 'Failed to delete project' });
     }
 });
 
-// PUT project checklist item
 app.put('/api/projects/:projectId/checklist/:taskId', async (req, res) => {
     try {
         const { taskId } = req.params;
         const { completed } = req.body;
-
         const updatedTask = await prisma.checklistItem.update({
             where: { id: taskId },
             data: { completed }
         });
-
         res.json(updatedTask);
     } catch (error) {
-        console.error("Error updating checklist:", error);
         res.status(500).json({ error: 'Failed to update checklist' });
     }
 });
@@ -205,9 +192,11 @@ app.put('/api/projects/:projectId/checklist/:taskId', async (req, res) => {
 app.post('/api/chat', async (req, res) => {
     try {
         const { question, context } = req.body;
-        
-        // ✅ CORRECCIÓN AQUÍ TAMBIÉN: Usamos gemini-1.5-flash-latest
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+        // Volvemos a 'v1' aquí también con el modelo estable
+        const model = genAI.getGenerativeModel(
+            { model: "gemini-1.5-flash" },
+            { apiVersion: 'v1' }
+        );
 
         const prompt = `
 Eres un asistente que responde dudas sobre este proyecto creativo.
@@ -231,5 +220,4 @@ Responde de forma concisa, directa y amigable.
 
 app.listen(port, '0.0.0.0', () => {
     console.log(`Backend server running on http://localhost:${port}`);
-    if (!apiKey) console.log(`\n!!! ADD YOUR GEMINI_API_KEY TO .env TO MAKE THIS WORK !!!\n`);
 });
