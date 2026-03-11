@@ -4,7 +4,7 @@ import multer from 'multer';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import dotenv from 'dotenv';
 import fs from 'fs';
-import { GoogleAIFileManager } from "@google/generative-ai/server";
+import { execSync } from 'child_process';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 
@@ -13,7 +13,16 @@ dotenv.config();
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
 
-// Ensure DB is connected before accepting requests
+// Run DB migration at startup so tables always exist
+try {
+    console.log('⏳ Running prisma db push...');
+    execSync('node node_modules/prisma/build/index.js db push --accept-data-loss', { stdio: 'inherit' });
+    console.log('✅ DB schema up to date');
+} catch (e) {
+    console.error('❌ DB push failed:', e.message);
+}
+
+// Connect Prisma
 prisma.$connect()
     .then(() => console.log('✅ Prisma connected to database'))
     .catch(e => console.error('❌ Prisma connection error:', e.message));
@@ -52,22 +61,6 @@ if (!apiKey) {
     console.warn("⚠️ Warning: GEMINI_API_KEY is not set in the .env file.");
 }
 const genAI = new GoogleGenerativeAI(apiKey);
-const fileManager = new GoogleAIFileManager(apiKey);
-
-// Helper to wait for file processing
-async function waitForFilesActive(files) {
-    for (const name of files.map((file) => file.name)) {
-        let fileInfo = await fileManager.getFile(name);
-        while (fileInfo.state === "PROCESSING") {
-            process.stdout.write(".");
-            await new Promise((resolve) => setTimeout(resolve, 1000));
-            fileInfo = await fileManager.getFile(name);
-        }
-        if (fileInfo.state !== "ACTIVE") {
-            throw Error(`File ${fileInfo.name} failed to process`);
-        }
-    }
-}
 
 // System Prompt forcing JSON output
 const SYSTEM_INSTRUCTION = `
@@ -107,43 +100,32 @@ app.post('/api/process-audio', upload.single('audio'), async (req, res) => {
         else if (mimeType.includes('mpeg') || mimeType.includes('mp3')) mimeType = 'audio/mpeg';
         console.log(`Using mimeType for Gemini: ${mimeType}`);
 
-        // 1. Upload the file to Gemini
-        const uploadResult = await fileManager.uploadFile(
-            req.file.path,
-            {
-                mimeType: mimeType,
-                displayName: req.file.originalname || 'recording.webm',
-            }
-        );
+        // Read file as base64 and send inline (no Files API needed)
+        const audioData = fs.readFileSync(req.file.path);
+        const base64Audio = audioData.toString('base64');
+        fs.unlinkSync(req.file.path); // Clean up immediately
 
-        // 2. Wait for it to be active
-        await waitForFilesActive([uploadResult.file]);
-
-        // 3. Generate content with the model
+        // Generate content with inline audio data
         const model = genAI.getGenerativeModel({
-            model: "gemini-1.5-flash-latest",
+            model: "gemini-1.5-flash",
             systemInstruction: SYSTEM_INSTRUCTION,
         });
 
         const result = await model.generateContent([
             {
-                fileData: {
-                    mimeType: uploadResult.file.mimeType,
-                    fileUri: uploadResult.file.uri
+                inlineData: {
+                    mimeType: mimeType,
+                    data: base64Audio
                 }
             },
             { text: "Por favor, analiza este audio y genera el JSON solicitado." }
         ]);
 
         const responseText = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
+        console.log('Gemini response:', responseText.substring(0, 100));
 
         // Try to parse JSON from Gemini
         const parsedData = JSON.parse(responseText);
-
-        // Clean up temporary local file
-        fs.unlinkSync(req.file.path);
-        // Delete from Gemini server
-        await fileManager.deleteFile(uploadResult.file.name);
 
         // Save to Database via Prisma
         const savedProject = await prisma.project.create({
