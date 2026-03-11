@@ -121,7 +121,7 @@ app.post('/api/process-audio', upload.single('audio'), async (req, res) => {
 
         // 3. Generate content with the model
         const model = genAI.getGenerativeModel({
-            model: "gemini-2.0-flash",
+            model: "gemini-1.5-flash-latest",
             systemInstruction: SYSTEM_INSTRUCTION,
         });
 
@@ -229,7 +229,7 @@ app.post('/api/chat', async (req, res) => {
     try {
         const { question, context } = req.body;
 
-        const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
 
         const prompt = `
 Eres un asistente que responde dudas sobre este proyecto creativo.
