@@ -1,30 +1,27 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
+import { fetchProjects, deleteProjectFromApi, toggleChecklistItem } from './aiService';
 
 const AppContext = createContext();
 
 export const useAppContext = () => useContext(AppContext);
 
 export const AppProvider = ({ children }) => {
-    const [projects, setProjects] = useState(() => {
-        const saved = localStorage.getItem('adhd_projects');
-        if (saved) {
-            try {
-                return JSON.parse(saved);
-            } catch (e) {
-                return [];
-            }
-        }
-        return [];
-    });
+    const [projects, setProjects] = useState([]);
 
     const [currentView, setCurrentView] = useState('dashboard'); // dashboard, record, processing, project
     const [activeProjectId, setActiveProjectId] = useState(null);
     const [currentAudioBlob, setCurrentAudioBlob] = useState(null);
 
-    // Save to local storage whenever projects change
+    // Fetch from database on load
     useEffect(() => {
-        localStorage.setItem('adhd_projects', JSON.stringify(projects));
-    }, [projects]);
+        const loadProjects = async () => {
+            try {
+                const data = await fetchProjects();
+                setProjects(data);
+            } catch (e) { console.error(e); }
+        }
+        loadProjects();
+    }, []);
 
     const addProject = (projectData) => {
         setProjects(prev => [projectData, ...prev]);
@@ -34,15 +31,19 @@ export const AppProvider = ({ children }) => {
         setProjects(prev => prev.map(p => p.id === projectId ? { ...p, ...updatedData } : p));
     };
 
-    const deleteProject = (projectId) => {
-        setProjects(prev => prev.filter(p => p.id !== projectId));
-        if (activeProjectId === projectId) {
-            setCurrentView('dashboard');
-            setActiveProjectId(null);
-        }
+    const deleteProject = async (projectId) => {
+        try {
+            await deleteProjectFromApi(projectId);
+            setProjects(prev => prev.filter(p => p.id !== projectId));
+            if (activeProjectId === projectId) {
+                setCurrentView('dashboard');
+                setActiveProjectId(null);
+            }
+        } catch (e) { console.error(e); }
     };
 
-    const toggleTaskCompletion = (projectId, taskId) => {
+    const toggleTaskCompletion = async (projectId, taskId) => {
+        const originalProjects = [...projects];
         setProjects(prev => prev.map(p => {
             if (p.id === projectId) {
                 const updatedChecklist = p.checklist.map(task =>
@@ -52,6 +53,15 @@ export const AppProvider = ({ children }) => {
             }
             return p;
         }));
+
+        try {
+            const project = originalProjects.find(p => p.id === projectId);
+            const task = project.checklist.find(t => t.id === taskId);
+            await toggleChecklistItem(projectId, taskId, !task.completed);
+        } catch (e) {
+            console.error(e);
+            setProjects(originalProjects);
+        }
     };
 
     const navigateTo = (view, projectId = null) => {

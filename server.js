@@ -5,8 +5,10 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import { GoogleAIFileManager } from "@google/generative-ai/server";
+import { PrismaClient } from '@prisma/client';
 
 dotenv.config();
+const prisma = new PrismaClient();
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -108,7 +110,25 @@ app.post('/api/process-audio', upload.single('audio'), async (req, res) => {
         // Delete from Gemini server
         await fileManager.deleteFile(uploadResult.file.name);
 
-        res.json(parsedData);
+        // Save to Database via Prisma
+        const savedProject = await prisma.project.create({
+            data: {
+                title: parsedData.title,
+                transcript: parsedData.transcript,
+                summary: parsedData.summary,
+                keyInstructions: parsedData.keyInstructions || [],
+                checklist: {
+                    create: (parsedData.checklist || []).map(item => ({
+                        text: item.text,
+                        completed: item.completed || false
+                    }))
+                }
+            },
+            include: { checklist: true }
+        });
+
+        res.json(savedProject);
+
 
     } catch (error) {
         console.error("Error processing audio:", error);
@@ -117,6 +137,51 @@ app.post('/api/process-audio', upload.single('audio'), async (req, res) => {
             fs.unlinkSync(req.file.path);
         }
         res.status(500).json({ error: 'Failed to process audio', details: error.message });
+    }
+});
+
+// GET all projects
+app.get('/api/projects', async (req, res) => {
+    try {
+        const projects = await prisma.project.findMany({
+            include: { checklist: true },
+            orderBy: { timestamp: 'desc' }
+        });
+        res.json(projects);
+    } catch (error) {
+        console.error("Error fetching projects:", error);
+        res.status(500).json({ error: 'Failed to fetch projects' });
+    }
+});
+
+// DELETE project
+app.delete('/api/projects/:id', async (req, res) => {
+    try {
+        await prisma.project.delete({
+            where: { id: req.params.id }
+        });
+        res.json({ success: true });
+    } catch (error) {
+        console.error("Error deleting project:", error);
+        res.status(500).json({ error: 'Failed to delete project' });
+    }
+});
+
+// PUT project checklist item
+app.put('/api/projects/:projectId/checklist/:taskId', async (req, res) => {
+    try {
+        const { taskId } = req.params;
+        const { completed } = req.body;
+
+        const updatedTask = await prisma.checklistItem.update({
+            where: { id: taskId },
+            data: { completed }
+        });
+
+        res.json(updatedTask);
+    } catch (error) {
+        console.error("Error updating checklist:", error);
+        res.status(500).json({ error: 'Failed to update checklist' });
     }
 });
 

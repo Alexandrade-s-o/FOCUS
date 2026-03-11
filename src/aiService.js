@@ -20,11 +20,29 @@ export const mockProcessRecording = async (audioBlob) => {
   }
 
   const data = await response.json();
-  return {
-    id: Date.now().toString(),
-    timestamp: new Date().toISOString(),
-    ...data // title, transcript, summary, keyInstructions, checklist
-  };
+  return data;
+};
+
+export const fetchProjects = async () => {
+  const response = await fetch(`${API_BASE}/projects`);
+  if (!response.ok) throw new Error('Failed to fetch projects');
+  return await response.json();
+};
+
+export const deleteProjectFromApi = async (id) => {
+  const response = await fetch(`${API_BASE}/projects/${id}`, { method: 'DELETE' });
+  if (!response.ok) throw new Error('Failed to delete project');
+  return await response.json();
+};
+
+export const toggleChecklistItem = async (projectId, taskId, completed) => {
+  const response = await fetch(`${API_BASE}/projects/${projectId}/checklist/${taskId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ completed })
+  });
+  if (!response.ok) throw new Error('Failed to update task');
+  return await response.json();
 };
 
 export const mockAiChatResponse = async (question, context) => {
