@@ -107,14 +107,12 @@ app.post('/api/process-audio', upload.single('audio'), async (req, res) => {
 
         // Generate content with inline audio data
         const model = genAI.getGenerativeModel(
-            {
-                model: "gemini-1.5-flash",
-                systemInstruction: SYSTEM_INSTRUCTION,
-            },
+            { model: "gemini-1.5-flash" },
             { apiVersion: "v1" }
         );
 
         const result = await model.generateContent([
+            { text: SYSTEM_INSTRUCTION },
             {
                 inlineData: {
                     mimeType: mimeType,
