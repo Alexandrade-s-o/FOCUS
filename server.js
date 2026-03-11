@@ -58,28 +58,27 @@ const SYSTEM_INSTRUCTION = `
 Eres un asistente experto organizado para creativos con TDAH.
 Recibirás un audio (un briefing de un cliente o notas propias).
 
-Tu tarea es analizarlo y devolver la información en este formato JSON estricto:
+Tu tarea es analizarlo y devolver la información ESTRICTAMENTE en este formato JSON, sin texto extra:
 {
   "title": "Un título corto (máx 5 palabras)",
   "transcript": "La transcripción exacta de lo que escuchaste",
   "summary": "Un resumen muy claro y directo (amigable para TDAH) de qué trata el proyecto.",
   "keyInstructions": [
     "Instrucción clave 1",
-    "Instrucción clave 2 (enfócate en colores, duraciones, estilos, etc.)"
+    "Instrucción clave 2"
   ],
   "checklist": [
     { "id": "1", "text": "Tarea accionable corta 1", "completed": false },
     { "id": "2", "text": "Tarea accionable corta 2", "completed": false }
   ]
 }
-Asegúrate de capturar tareas accionables para el checklist.
 `;
 
 app.post('/api/process-audio', upload.single('audio'), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: 'No audio file provided' });
 
-        console.log(`Received audio file: ${req.file.path}, mimetype: ${req.file.mimetype}, size: ${req.file.size}`);
+        console.log(`Received audio file: ${req.file.path}, mimetype: ${req.file.mimetype}`);
 
         let mimeType = req.file.mimetype || 'audio/webm';
         if (mimeType.includes('webm')) mimeType = 'audio/webm';
@@ -91,34 +90,25 @@ app.post('/api/process-audio', upload.single('audio'), async (req, res) => {
         const base64Audio = audioData.toString('base64');
         fs.unlinkSync(req.file.path); 
 
-        // 🛑 EL TRUCO INFALIBLE: 
-        // 1. Usamos gemini-1.5-flash (el nombre estable)
-        // 2. Obligamos a usar la versión 'v1' donde sí encuentra el modelo.
-        // 3. NO usamos el parámetro systemInstruction aquí para evitar el error 400.
-        const model = genAI.getGenerativeModel(
-            { 
-                model: "gemini-1.5-flash",
-                generationConfig: {
-                    responseMimeType: "application/json"
-                }
-            },
-            { apiVersion: 'v1' } 
-        );
+        // 🛑 LO MÁS SIMPLE POSIBLE: Solo el nombre del modelo. Sin configuraciones extra.
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-        // Pasamos las instrucciones como texto normal mezcladas en la conversación
         const result = await model.generateContent([
-            { text: "INSTRUCCIONES DEL SISTEMA:\n" + SYSTEM_INSTRUCTION },
+            { text: "INSTRUCCIONES:\n" + SYSTEM_INSTRUCTION },
             {
                 inlineData: {
                     mimeType: mimeType,
                     data: base64Audio
                 }
             },
-            { text: "\nPor favor, analiza este audio basándote estrictamente en las instrucciones anteriores y genera el JSON." }
+            { text: "\nPor favor, analiza este audio y genera ÚNICAMENTE el JSON solicitado." }
         ]);
 
-        const responseText = result.response.text();
-        console.log('Gemini response:', responseText.substring(0, 100));
+        // Volvemos a tu lógica original para limpiar el texto por si Gemini añade ```json
+        let responseText = result.response.text();
+        responseText = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+        
+        console.log('Gemini response (cleaned):', responseText.substring(0, 100));
 
         const parsedData = JSON.parse(responseText);
 
@@ -144,11 +134,7 @@ app.post('/api/process-audio', upload.single('audio'), async (req, res) => {
         console.error("Error processing audio:", error.message);
         if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
         
-        const isRateLimit = error.message?.includes('429') || error.status === 429;
-        const details = isRateLimit
-            ? 'Límite de cuota de Gemini alcanzado. Espera 1 minuto y vuelve a intentarlo.'
-            : (error.message || 'Error desconocido');
-        
+        const details = error.message || 'Error desconocido';
         res.status(500).json({ error: 'Failed to process audio', details: details });
     }
 });
@@ -161,7 +147,6 @@ app.get('/api/projects', async (req, res) => {
         });
         res.json(projects);
     } catch (error) {
-        console.error("Error fetching projects:", error);
         res.status(500).json({ error: 'Failed to fetch projects' });
     }
 });
@@ -192,11 +177,8 @@ app.put('/api/projects/:projectId/checklist/:taskId', async (req, res) => {
 app.post('/api/chat', async (req, res) => {
     try {
         const { question, context } = req.body;
-        // Volvemos a 'v1' aquí también con el modelo estable
-        const model = genAI.getGenerativeModel(
-            { model: "gemini-1.5-flash" },
-            { apiVersion: 'v1' }
-        );
+        // Lo más simple posible aquí también
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
         const prompt = `
 Eres un asistente que responde dudas sobre este proyecto creativo.
