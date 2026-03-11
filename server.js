@@ -17,8 +17,26 @@ const prisma = new PrismaClient({ adapter });
 const app = express();
 const port = process.env.PORT || 3001;
 
-app.use(cors());
+app.use(cors({ origin: '*' }));
 app.use(express.json());
+
+// ═══ Health check — abre esta URL para diagnosticar ═══
+app.get('/api/health', async (req, res) => {
+    const status = {
+        server: 'ok',
+        geminiKey: !!process.env.GEMINI_API_KEY,
+        databaseUrl: !!process.env.DATABASE_URL,
+        dbConnection: false,
+        error: null
+    };
+    try {
+        await prisma.$queryRaw`SELECT 1`;
+        status.dbConnection = true;
+    } catch (e) {
+        status.error = e.message;
+    }
+    res.json(status);
+});
 
 // Set up Multer for handling audio file uploads
 const upload = multer({ dest: 'uploads/' });
