@@ -5,8 +5,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import { GoogleAIFileManager } from "@google/generative-ai/server";
-import pkg from '@prisma/client';
-const { PrismaClient } = pkg;
+import { PrismaClient } from '@prisma/client';
 
 dotenv.config();
 const prisma = new PrismaClient();
