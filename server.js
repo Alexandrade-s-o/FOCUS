@@ -100,16 +100,15 @@ app.post('/api/process-audio', upload.single('audio'), async (req, res) => {
         const base64Audio = audioData.toString('base64');
         fs.unlinkSync(req.file.path); 
 
-        // ✅ FORMA CORRECTA: Pasamos las instrucciones y forzamos el JSON aquí
+        // ✅ CORRECCIÓN AQUÍ: Usamos gemini-1.5-flash-latest
         const model = genAI.getGenerativeModel({ 
-            model: "gemini-1.5-flash",
+            model: "gemini-1.5-flash-latest",
             systemInstruction: SYSTEM_INSTRUCTION,
             generationConfig: {
-                responseMimeType: "application/json" // Esto fuerza a Gemini a responder SOLO con JSON válido
+                responseMimeType: "application/json"
             }
         });
 
-        // ✅ FORMA CORRECTA: Solo pasamos el audio y el prompt en generateContent
         const result = await model.generateContent([
             {
                 inlineData: {
@@ -120,7 +119,6 @@ app.post('/api/process-audio', upload.single('audio'), async (req, res) => {
             { text: "Por favor, analiza este audio y genera el JSON solicitado." }
         ]);
 
-        // Al usar responseMimeType="application/json", el texto ya viene limpio
         const responseText = result.response.text();
         console.log('Gemini response:', responseText.substring(0, 100));
 
@@ -155,7 +153,6 @@ app.post('/api/process-audio', upload.single('audio'), async (req, res) => {
             ? 'Límite de cuota de Gemini alcanzado. Espera 1 minuto y vuelve a intentarlo.'
             : (error.message || 'Error desconocido');
         
-        // Devolvemos el error en formato JSON para que el frontend lo pueda leer bien
         res.status(500).json({ error: 'Failed to process audio', details: details });
     }
 });
@@ -208,8 +205,9 @@ app.put('/api/projects/:projectId/checklist/:taskId', async (req, res) => {
 app.post('/api/chat', async (req, res) => {
     try {
         const { question, context } = req.body;
-        // ✅ Quitamos el apiVersion aquí también
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        
+        // ✅ CORRECCIÓN AQUÍ TAMBIÉN: Usamos gemini-1.5-flash-latest
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
 
         const prompt = `
 Eres un asistente que responde dudas sobre este proyecto creativo.
