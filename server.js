@@ -4,7 +4,6 @@ import multer from 'multer';
 import Groq, { toFile } from 'groq-sdk';
 import dotenv from 'dotenv';
 import fs from 'fs';
-import { execSync } from 'child_process';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 
@@ -13,17 +12,36 @@ dotenv.config();
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
 
-try {
-    console.log('⏳ Running prisma db push...');
-    execSync('node node_modules/prisma/build/index.js db push --accept-data-loss', { stdio: 'inherit' });
-    console.log('✅ DB schema up to date');
-} catch (e) {
-    console.error('❌ DB push failed:', e.message);
+async function ensureSchema() {
+    try {
+        await prisma.$connect();
+        console.log('✅ Prisma connected to database');
+        await prisma.$executeRawUnsafe(`
+            CREATE TABLE IF NOT EXISTS "Project" (
+                "id" TEXT PRIMARY KEY,
+                "title" TEXT NOT NULL,
+                "timestamp" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                "transcript" TEXT NOT NULL,
+                "summary" TEXT NOT NULL,
+                "keyInstructions" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[]
+            );
+        `);
+        await prisma.$executeRawUnsafe(`
+            CREATE TABLE IF NOT EXISTS "ChecklistItem" (
+                "id" TEXT PRIMARY KEY,
+                "text" TEXT NOT NULL,
+                "completed" BOOLEAN NOT NULL DEFAULT false,
+                "projectId" TEXT NOT NULL,
+                CONSTRAINT "ChecklistItem_projectId_fkey" FOREIGN KEY ("projectId")
+                    REFERENCES "Project"("id") ON DELETE CASCADE ON UPDATE CASCADE
+            );
+        `);
+        console.log('✅ DB schema ensured (Project, ChecklistItem)');
+    } catch (e) {
+        console.error('❌ Schema bootstrap error:', e.message);
+    }
 }
-
-prisma.$connect()
-    .then(() => console.log('✅ Prisma connected to database'))
-    .catch(e => console.error('❌ Prisma connection error:', e.message));
+ensureSchema();
 
 const app = express();
 const port = process.env.PORT || 3001;

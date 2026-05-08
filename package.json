@@ -9,7 +9,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "postinstall": "node node_modules/prisma/build/index.js generate",
-    "start": "node node_modules/prisma/build/index.js db push --accept-data-loss && node server.js"
+    "start": "node server.js"
   },
   "dependencies": {
     "@google/generative-ai": "latest",
