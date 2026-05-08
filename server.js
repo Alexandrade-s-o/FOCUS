@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
-import Groq from 'groq-sdk';
+import Groq, { toFile } from 'groq-sdk';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import { execSync } from 'child_process';
@@ -86,8 +86,11 @@ app.post('/api/process-audio', upload.single('audio'), async (req, res) => {
         // ============================================
         // PASO 1: TRANSCRIBIR CON WHISPER (GROQ)
         // ============================================
+        const filename = req.file.originalname || 'recording.webm';
+        const audioFile = await toFile(fs.createReadStream(req.file.path), filename);
+
         const transcription = await groq.audio.transcriptions.create({
-            file: fs.createReadStream(req.file.path),
+            file: audioFile,
             model: 'whisper-large-v3', // El más preciso. Alternativa: 'whisper-large-v3-turbo' (más rápido y barato)
             language: 'es', // Español. Quítalo si quieres detección automática
             response_format: 'json',
