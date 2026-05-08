@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import Groq from 'groq-sdk';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import { execSync } from 'child_process';
@@ -31,10 +31,17 @@ const port = process.env.PORT || 3001;
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 
+// ============================================
+// 🔑 GROQ CLIENT
+// ============================================
+const groqApiKey = process.env.GROQ_API_KEY;
+if (!groqApiKey) console.warn("⚠️ Warning: GROQ_API_KEY is not set in the .env file.");
+const groq = new Groq({ apiKey: groqApiKey });
+
 app.get('/api/health', async (req, res) => {
     const status = {
         server: 'ok',
-        geminiKey: !!process.env.GEMINI_API_KEY,
+        groqKey: !!process.env.GROQ_API_KEY,
         databaseUrl: !!process.env.DATABASE_URL,
         dbConnection: false,
         error: null
@@ -50,18 +57,14 @@ app.get('/api/health', async (req, res) => {
 
 const upload = multer({ dest: 'uploads/' });
 
-const apiKey = process.env.GEMINI_API_KEY;
-if (!apiKey) console.warn("⚠️ Warning: GEMINI_API_KEY is not set in the .env file.");
-const genAI = new GoogleGenerativeAI(apiKey);
-
 const SYSTEM_INSTRUCTION = `
 Eres un asistente experto organizado para creativos con TDAH.
-Recibirás un audio (un briefing de un cliente o notas propias).
+Recibirás la transcripción de un audio (un briefing de un cliente o notas propias).
 
-Tu tarea es analizarlo y devolver la información ESTRICTAMENTE en este formato JSON, sin texto extra:
+Tu tarea es analizarlo y devolver la información ESTRICTAMENTE en este formato JSON, sin texto extra, sin markdown, sin \`\`\`:
 {
   "title": "Un título corto (máx 5 palabras)",
-  "transcript": "La transcripción exacta de lo que escuchaste",
+  "transcript": "La transcripción exacta que recibiste",
   "summary": "Un resumen muy claro y directo (amigable para TDAH) de qué trata el proyecto.",
   "keyInstructions": [
     "Instrucción clave 1",
@@ -80,38 +83,56 @@ app.post('/api/process-audio', upload.single('audio'), async (req, res) => {
 
         console.log(`Received audio file: ${req.file.path}, mimetype: ${req.file.mimetype}`);
 
-        let mimeType = req.file.mimetype || 'audio/webm';
-        if (mimeType.includes('webm')) mimeType = 'audio/webm';
-        else if (mimeType.includes('ogg')) mimeType = 'audio/ogg';
-        else if (mimeType.includes('mp4')) mimeType = 'audio/mp4';
-        else if (mimeType.includes('mpeg') || mimeType.includes('mp3')) mimeType = 'audio/mpeg';
-        
-        const audioData = fs.readFileSync(req.file.path);
-        const base64Audio = audioData.toString('base64');
-        fs.unlinkSync(req.file.path); 
+        // ============================================
+        // PASO 1: TRANSCRIBIR CON WHISPER (GROQ)
+        // ============================================
+        const transcription = await groq.audio.transcriptions.create({
+            file: fs.createReadStream(req.file.path),
+            model: 'whisper-large-v3', // El más preciso. Alternativa: 'whisper-large-v3-turbo' (más rápido y barato)
+            language: 'es', // Español. Quítalo si quieres detección automática
+            response_format: 'json',
+            temperature: 0.0
+        });
 
-        // 🛑 LO MÁS SIMPLE POSIBLE: Solo el nombre del modelo. Sin configuraciones extra.
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        // Limpiamos el archivo temporal
+        fs.unlinkSync(req.file.path);
 
-        const result = await model.generateContent([
-            { text: "INSTRUCCIONES:\n" + SYSTEM_INSTRUCTION },
-            {
-                inlineData: {
-                    mimeType: mimeType,
-                    data: base64Audio
+        const transcriptText = transcription.text;
+        console.log('📝 Transcripción Whisper:', transcriptText.substring(0, 150));
+
+        if (!transcriptText || transcriptText.trim().length === 0) {
+            return res.status(400).json({ error: 'No se pudo transcribir el audio (vacío o silencioso)' });
+        }
+
+        // ============================================
+        // PASO 2: ANALIZAR CON LLAMA (GROQ) -> JSON
+        // ============================================
+        const chatCompletion = await groq.chat.completions.create({
+            model: 'llama-3.3-70b-versatile', // Modelo potente y rápido en Groq
+            messages: [
+                { role: 'system', content: SYSTEM_INSTRUCTION },
+                { 
+                    role: 'user', 
+                    content: `Aquí está la transcripción del audio. Analízala y devuelve SOLO el JSON solicitado:\n\n"""${transcriptText}"""` 
                 }
-            },
-            { text: "\nPor favor, analiza este audio y genera ÚNICAMENTE el JSON solicitado." }
-        ]);
+            ],
+            temperature: 0.3,
+            response_format: { type: 'json_object' } // Fuerza salida JSON válida
+        });
 
-        // Volvemos a tu lógica original para limpiar el texto por si Gemini añade ```json
-        let responseText = result.response.text();
+        let responseText = chatCompletion.choices[0].message.content;
         responseText = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-        
-        console.log('Gemini response (cleaned):', responseText.substring(0, 100));
+
+        console.log('🤖 Respuesta Llama (cleaned):', responseText.substring(0, 100));
 
         const parsedData = JSON.parse(responseText);
 
+        // Aseguramos que el transcript real sea el de Whisper, no lo que invente el LLM
+        parsedData.transcript = transcriptText;
+
+        // ============================================
+        // PASO 3: GUARDAR EN DB
+        // ============================================
         const savedProject = await prisma.project.create({
             data: {
                 title: parsedData.title,
@@ -133,7 +154,7 @@ app.post('/api/process-audio', upload.single('audio'), async (req, res) => {
     } catch (error) {
         console.error("Error processing audio:", error.message);
         if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-        
+
         const details = error.message || 'Error desconocido';
         res.status(500).json({ error: 'Failed to process audio', details: details });
     }
@@ -177,22 +198,29 @@ app.put('/api/projects/:projectId/checklist/:taskId', async (req, res) => {
 app.post('/api/chat', async (req, res) => {
     try {
         const { question, context } = req.body;
-        // Lo más simple posible aquí también
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-        const prompt = `
-Eres un asistente que responde dudas sobre este proyecto creativo.
+        const chatCompletion = await groq.chat.completions.create({
+            model: 'llama-3.3-70b-versatile',
+            messages: [
+                {
+                    role: 'system',
+                    content: 'Eres un asistente que responde dudas sobre proyectos creativos. Responde de forma concisa, directa y amigable.'
+                },
+                {
+                    role: 'user',
+                    content: `
 Contexto del Proyecto (Transcripción): ${context.transcript}
 Resumen: ${context.summary}
 Checklist: ${JSON.stringify(context.checklist)}
 
 Pregunta del usuario: ${question}
+                    `
+                }
+            ],
+            temperature: 0.5
+        });
 
-Responde de forma concisa, directa y amigable.
-        `;
-
-        const result = await model.generateContent(prompt);
-        res.json({ reply: result.response.text() });
+        res.json({ reply: chatCompletion.choices[0].message.content });
 
     } catch (error) {
         console.error("Chat Error:", error);
