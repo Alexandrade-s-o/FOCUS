@@ -56,7 +56,7 @@ export const mockAiChatResponse = async (question, context) => {
     return {
       id: Date.now().toString(),
       sender: 'ai',
-      text: "Hubo un problema al procesar tu respuesta con Gemini. Intenta de nuevo.",
+      text: "Hubo un problema al procesar tu respuesta con Grok. Intenta de nuevo.",
       timestamp: new Date().toISOString()
     };
   }

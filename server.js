@@ -32,16 +32,50 @@ app.use(cors({ origin: '*' }));
 app.use(express.json());
 
 // ============================================
-// 🔑 GROQ CLIENT
+// 🔑 GROQ CLIENT (solo para Whisper / transcripción de audio)
 // ============================================
 const groqApiKey = process.env.GROQ_API_KEY;
-if (!groqApiKey) console.warn("⚠️ Warning: GROQ_API_KEY is not set in the .env file.");
+if (!groqApiKey) console.warn("⚠️ Warning: GROQ_API_KEY is not set (necesario para transcripción de audio Whisper).");
 const groq = new Groq({ apiKey: groqApiKey });
+
+// ============================================
+// 🔑 GROK CLIENT (xAI) - Compatible con formato OpenAI
+// ============================================
+const grokApiKey = process.env.GROK_API_KEY || process.env.XAI_API_KEY;
+const GROK_BASE_URL = process.env.GROK_BASE_URL || 'https://api.x.ai/v1';
+const GROK_MODEL = process.env.GROK_MODEL || 'grok-4-latest';
+if (!grokApiKey) console.warn("⚠️ Warning: GROK_API_KEY (o XAI_API_KEY) no está definido en .env");
+
+async function grokChatCompletion({ messages, temperature = 0.5, response_format }) {
+    const body = {
+        model: GROK_MODEL,
+        messages,
+        temperature
+    };
+    if (response_format) body.response_format = response_format;
+
+    const response = await fetch(`${GROK_BASE_URL}/chat/completions`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${grokApiKey}`
+        },
+        body: JSON.stringify(body)
+    });
+
+    if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`Grok API error ${response.status}: ${errText}`);
+    }
+    return await response.json();
+}
 
 app.get('/api/health', async (req, res) => {
     const status = {
         server: 'ok',
         groqKey: !!process.env.GROQ_API_KEY,
+        grokKey: !!grokApiKey,
+        grokModel: GROK_MODEL,
         databaseUrl: !!process.env.DATABASE_URL,
         dbConnection: false,
         error: null
@@ -105,25 +139,24 @@ app.post('/api/process-audio', upload.single('audio'), async (req, res) => {
         }
 
         // ============================================
-        // PASO 2: ANALIZAR CON LLAMA (GROQ) -> JSON
+        // PASO 2: ANALIZAR CON GROK (xAI) -> JSON
         // ============================================
-        const chatCompletion = await groq.chat.completions.create({
-            model: 'llama-3.3-70b-versatile', // Modelo potente y rápido en Groq
+        const chatCompletion = await grokChatCompletion({
             messages: [
                 { role: 'system', content: SYSTEM_INSTRUCTION },
-                { 
-                    role: 'user', 
-                    content: `Aquí está la transcripción del audio. Analízala y devuelve SOLO el JSON solicitado:\n\n"""${transcriptText}"""` 
+                {
+                    role: 'user',
+                    content: `Aquí está la transcripción del audio. Analízala y devuelve SOLO el JSON solicitado:\n\n"""${transcriptText}"""`
                 }
             ],
             temperature: 0.3,
-            response_format: { type: 'json_object' } // Fuerza salida JSON válida
+            response_format: { type: 'json_object' }
         });
 
         let responseText = chatCompletion.choices[0].message.content;
         responseText = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
 
-        console.log('🤖 Respuesta Llama (cleaned):', responseText.substring(0, 100));
+        console.log('🤖 Respuesta Grok (cleaned):', responseText.substring(0, 100));
 
         const parsedData = JSON.parse(responseText);
 
@@ -199,8 +232,7 @@ app.post('/api/chat', async (req, res) => {
     try {
         const { question, context } = req.body;
 
-        const chatCompletion = await groq.chat.completions.create({
-            model: 'llama-3.3-70b-versatile',
+        const chatCompletion = await grokChatCompletion({
             messages: [
                 {
                     role: 'system',
@@ -224,7 +256,7 @@ Pregunta del usuario: ${question}
 
     } catch (error) {
         console.error("Chat Error:", error);
-        res.status(500).json({ error: 'Failed chat generation' });
+        res.status(500).json({ error: 'Failed chat generation', details: error.message });
     }
 });
 
