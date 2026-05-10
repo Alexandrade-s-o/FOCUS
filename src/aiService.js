@@ -1,5 +1,7 @@
-// Usará la variable de entorno en producción, o localhost en desarrollo
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+// En producción usa rutas relativas (mismo dominio que sirve el frontend).
+// En desarrollo usa VITE_API_URL o localhost:3001.
+const API_BASE = import.meta.env.VITE_API_URL
+  || (import.meta.env.PROD ? '/api' : 'http://localhost:3001/api');
 
 export const mockProcessRecording = async (audioBlob) => {
   const formData = new FormData();

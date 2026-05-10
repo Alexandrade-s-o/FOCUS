@@ -4,9 +4,14 @@ import multer from 'multer';
 import Groq from 'groq-sdk';
 import dotenv from 'dotenv';
 import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 dotenv.config();
 
@@ -259,6 +264,20 @@ Pregunta del usuario: ${question}
         res.status(500).json({ error: 'Failed chat generation', details: error.message });
     }
 });
+
+// ============================================
+// Servir frontend buildeado (Vite -> dist/) en producción
+// ============================================
+const distPath = path.join(__dirname, 'dist');
+if (fs.existsSync(distPath)) {
+    app.use(express.static(distPath));
+    app.get(/^\/(?!api).*/, (req, res) => {
+        res.sendFile(path.join(distPath, 'index.html'));
+    });
+    console.log(`📦 Sirviendo frontend desde ${distPath}`);
+} else {
+    console.log('ℹ️  No se encontró dist/ — modo solo-API');
+}
 
 app.listen(port, '0.0.0.0', () => {
     console.log(`Backend server running on http://localhost:${port}`);
